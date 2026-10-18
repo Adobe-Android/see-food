@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf7ef">
+  <title>See Food</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="See Food home"><span class="brand-icon" aria-hidden="true">🌭</span> see food<span class="brand-dot">.</span></a>
+    <div class="local-badge" id="ai-sign" data-state="checking" role="status" aria-live="polite" aria-atomic="true" title="Checking the local model…"><span class="sign-light" aria-hidden="true"></span><span class="sign-copy"><span class="sign-title">LOCAL AI</span><span class="sign-status" id="ai-status">CHECKING</span></span></div>
+  </header>
+
+  <main>
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">LESS THINKING. MORE HOTDOG.</p>
+      <h1 id="page-title">One very<br>important <span>question.</span></h1>
+      <p class="subtitle">Is it a hotdog? That's it. That's the app.</p>
+    </section>
+
+    <p id="availability-message" class="availability-message" role="status">Checking Local AI before you add a photo…</p>
+    <section class="workspace" aria-label="Photo classifier">
+      <div class="upload-panel" id="drop-zone">
+        <div class="panel-top"><span class="step-label">01 / THE EVIDENCE</span><span class="local-label">↳ no cloud uploads</span></div>
+        <div class="empty-state" id="empty-state">
+          <div class="photo-illustration" aria-hidden="true"><span class="spark spark-one">✦</span><span class="hotdog">🌭</span><span class="spark spark-two">✦</span></div>
+          <h2>Show us what you've got.</h2>
+          <p>Drop a food photo here, or pick one below.</p>
+          <div class="photo-actions">
+            <button class="button button-dark" id="upload-button" type="button" disabled><span aria-hidden="true">↑</span> Upload a photo</button>
+            <button class="button camera-button" id="camera-button" type="button" disabled><span aria-hidden="true">◎</span> Take a photo</button>
+          </div>
+          <span class="file-hint">JPG, PNG, WEBP & more · up to 15 MB</span>
+        </div>
+        <div class="preview-state" id="preview-state" hidden>
+          <div class="image-wrap"><img id="preview" alt="Selected photo for classification"><span class="scan-line" aria-hidden="true"></span></div>
+          <div class="photo-details"><span id="file-name"></span><button class="text-button" id="replace-button" type="button" disabled>Change photo</button></div>
+        </div>
+        <input id="file-input" type="file" accept="image/*" hidden disabled>
+        <input id="camera-input" type="file" accept="image/*" capture="environment" hidden disabled>
+      </div>
+
+      <div class="decision-panel">
+        <span class="step-label">02 / THE VERDICT</span>
+        <div id="ready-state" class="ready-state">
+          <div class="verdict-icon" aria-hidden="true">?</div>
+          <h2 id="ready-title">Add a photo to get started.</h2>
+          <p id="ready-description">One photo. One very important answer.</p>
+        </div>
+        <div id="loading-state" class="loading-state" hidden><div class="spinner" aria-hidden="true"></div><h2>Consulting the bun…</h2><p>Examining your photo. Good things take a moment.</p></div>
+        <div id="result-state" class="result-state" hidden><div id="result-icon" class="result-icon" aria-hidden="true"><span>🌭</span></div><p class="result-eyebrow">THE VERDICT</p><h2 id="result-title" tabindex="-1"></h2><p id="result-description"></p></div>
+        <div class="verdict-actions">
+          <button class="button button-orange" id="classify-button" type="button" disabled>Is it a hotdog? <span aria-hidden="true">↗</span></button>
+          <button class="button button-orange" id="reset-button" type="button" hidden>Try another photo <span aria-hidden="true">↗</span></button>
+          <p class="prediction-note">AI predictions can be wrong. Even about hotdogs.</p>
+        </div>
+      </div>
+    </section>
+    <p id="error-message" class="error-message" role="alert" hidden></p>
+    <p id="status-message" class="sr-only" role="status" aria-live="polite"></p>
+
+    <p class="privacy-note">Analyzed on the computer running the app.<br>No cloud uploads.</p>
+  </main>
+  <footer><span>Made with ❤️ and 🤖</span><span>Independently made. Not affiliated with the show.</span></footer>
+</body>
+</html>

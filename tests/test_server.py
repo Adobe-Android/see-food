@@ -41,6 +41,14 @@ class ValidationTests(unittest.TestCase):
             classify(IMAGE, 'http://localhost:1234', 'd1-3b', '')
         self.assertEqual(raised.exception.status, 503)
 
+    @patch('src.server.request.build_opener')
+    def test_classification_sends_bearer_token(self, opener):
+        response = opener.return_value.open.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(DECISION).encode()
+        classify(IMAGE, 'http://localhost:1234', 'd1-3b', 'test-token')
+        req = opener.return_value.open.call_args.args[0]
+        self.assertEqual(req.get_header('Authorization'), 'Bearer test-token')
+
     def test_cloud_url_not_allowed(self):
         with self.assertRaises(ValueError):
             make_server('127.0.0.1', 0, 'https://example.com', 'd1-3b')
@@ -85,6 +93,13 @@ class HTTPTests(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
         cls.thread.join()
+
+    def test_browser_modules_are_served(self):
+        for filename in ('app.js', 'browser-client.js', 'browser-worker.js', 'browser-core.js'):
+            with self.subTest(filename=filename), self.client.open(self.url + '/' + filename) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get_content_type(), 'text/javascript')
+                self.assertTrue(response.read())
 
     def post(self, payload, headers=None):
         req = request.Request(self.url + '/api/classify', data=json.dumps(payload).encode(),

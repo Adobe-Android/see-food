@@ -15,6 +15,64 @@ let busy = false;
 let statusRequest = null;
 let statusTimer = null;
 let modelState = 'checking';
+const staticHost = typeof __STATIC_HOST__ !== 'undefined' ? __STATIC_HOST__ : location.hostname.endsWith('.github.io');
+if (staticHost) byId('backend-select').querySelector('option[value="lmstudio"]').remove();
+let backend = staticHost ? 'browser' : 'lmstudio';
+let browserModel = null;
+let browserStarting = false;
+let browserLoadAttempted = false;
+let browserMessage = '';
+let backendVersion = 0;
+let browserSupport = 'checking';
+
+async function refreshBrowserSupport() {
+  browserSupport = 'checking';
+  syncBackendControls();
+  try {
+    let checkWebGPUSupport;
+    try { ({ checkWebGPUSupport } = await import('./browser-core.js')); }
+    catch { throw new Error('Browser support modules could not be loaded. If using the Python server, stop and restart it to pick up the updated frontend routes, then refresh this page. For static hosting, redeploy the complete build.'); }
+    await checkWebGPUSupport();
+    browserSupport = 'supported';
+    if (!browserModel) browserMessage = '';
+  } catch (error) {
+    browserSupport = 'unsupported';
+    browserMessage = error.message;
+  }
+  if (backend === 'browser') {
+    refreshModelStatus();
+    loadBrowserModel();
+  } else syncBackendControls();
+}
+
+async function getBrowserModel() {
+  if (!browserModel) {
+    const { BrowserModel } = await import('./browser-client.js');
+    browserModel = new BrowserModel((state, message) => {
+      browserMessage = message;
+      if (backend === 'browser') renderModelStatus(state, message);
+    });
+  }
+  return browserModel;
+}
+
+function syncBackendControls() {
+  byId('backend-select').value = backend;
+  byId('backend-select').disabled = busy;
+  byId('browser-controls').hidden = backend !== 'browser';
+  byId('load-model-button').hidden = !browserLoadAttempted || browserStarting || ['checking', 'busy', 'ready'].includes(browserModel?.state);
+  byId('load-model-button').disabled = browserSupport !== 'supported' || browserStarting || ['checking', 'busy', 'ready'].includes(browserModel?.state);
+  const progress = byId('model-progress');
+  progress.textContent = browserSupport === 'checking' ? 'Checking browser support…'
+    : browserMessage || 'Loading browser model…';
+  progress.hidden = backend !== 'browser';
+  byId('unload-model-button').hidden = !browserModel || browserModel.state === 'offline';
+  byId('backend-description').hidden = backend === 'browser' || staticHost;
+  byId('backend-description').textContent = 'Requires the Python app server and LM Studio on the host computer.';
+  byId('privacy-note').textContent = backend === 'browser'
+    ? 'Analyzed on this device only. Photos are never sent over the network. Model and runtime downloads require network access.'
+    : 'Analyzed on the computer running the app. No cloud uploads.';
+}
 
 function syncAvailability() {
   const available = modelState === 'ready' && !busy;
@@ -25,13 +83,14 @@ function syncAvailability() {
   dropZone.classList.toggle('unavailable', !available);
   if (!available) dropZone.classList.remove('dragging');
   const notice = byId('availability-message');
-  notice.hidden = available || busy;
+  notice.hidden = backend === 'browser' || available || busy;
   const messages = {
     checking: 'Checking Local AI before you add a photo…',
     offline: 'Local AI is off air. Start LM Studio and load the vision model to add or analyze a photo. We’ll reconnect automatically.',
     busy: 'Local AI is analyzing another photo. Please wait before adding yours.',
   };
-  notice.textContent = messages[modelState] || '';
+  notice.textContent = backend === 'browser' ? browserMessage : messages[modelState] || '';
+  syncBackendControls();
 }
 
 function renderModelStatus(state, message) {
@@ -47,7 +106,12 @@ function renderModelStatus(state, message) {
 
 async function refreshModelStatus() {
   clearTimeout(statusTimer);
+  if (backend === 'browser') {
+    renderModelStatus(browserModel?.state || 'offline', browserMessage);
+    return;
+  }
   if (document.hidden || statusRequest) return;
+  const version = backendVersion;
   const controller = new AbortController();
   statusRequest = controller;
   const timeout = setTimeout(() => controller.abort(), 6000);
@@ -56,18 +120,19 @@ async function refreshModelStatus() {
     if (!response.ok) throw new Error('Status unavailable');
     const result = await response.json();
     if (!['ready', 'busy', 'offline'].includes(result.state) || typeof result.message !== 'string') throw new Error('Invalid status');
-    renderModelStatus(busy && result.state === 'ready' ? 'busy' : result.state, result.message);
+    if (version === backendVersion) renderModelStatus(busy && result.state === 'ready' ? 'busy' : result.state, result.message);
   } catch {
-    renderModelStatus('offline', 'Cannot verify the model. Check the app server and LM Studio.');
+    if (version === backendVersion) renderModelStatus('offline', 'Cannot verify the model. Check the app server and LM Studio.');
   } finally {
     clearTimeout(timeout);
     statusRequest = null;
-    if (!document.hidden) statusTimer = setTimeout(refreshModelStatus, 10000);
+    if (!document.hidden && backend === 'lmstudio') statusTimer = setTimeout(refreshModelStatus, version === backendVersion ? 10000 : 0);
   }
 }
 
 document.addEventListener('visibilitychange', () => {
   clearTimeout(statusTimer);
+  if (backend === 'browser') return;
   if (document.hidden) {
     renderModelStatus('checking', 'Model status will refresh when you return.');
     if (statusRequest) statusRequest.abort();
@@ -75,8 +140,48 @@ document.addEventListener('visibilitychange', () => {
     refreshModelStatus();
   }
 });
+byId('backend-select').addEventListener('change', () => {
+  if (busy) return;
+  ++backendVersion;
+  ++selectionVersion;
+  clearTimeout(statusTimer);
+  statusRequest?.abort();
+  backend = staticHost ? 'browser' : byId('backend-select').value;
+  if (backend !== 'browser') browserModel?.stop();
+  byId('error-message').hidden = true;
+  setClassifyLabel('Is it a hotdog?');
+  showState('ready');
+  updateReadyCopy();
+  renderModelStatus(backend === 'browser' ? browserModel?.state || 'offline' : 'checking', 'Updating backend readiness.');
+  refreshModelStatus();
+  loadBrowserModel();
+});
+async function loadBrowserModel() {
+  if (backend !== 'browser' || browserSupport !== 'supported' || browserStarting || ['checking', 'busy', 'ready'].includes(browserModel?.state)) return;
+  const version = backendVersion;
+  browserStarting = true;
+  browserLoadAttempted = true;
+  browserMessage = 'Loading browser model…';
+  renderModelStatus('checking', browserMessage);
+  try {
+    const model = await getBrowserModel();
+    if (backend === 'browser' && version === backendVersion) model.load();
+  } catch (error) {
+    if (backend === 'browser' && version === backendVersion) {
+      browserMessage = `Could not start browser inference: ${error.message}`;
+      renderModelStatus('offline', browserMessage);
+    }
+  } finally {
+    browserStarting = false;
+    syncBackendControls();
+    if (version !== backendVersion) loadBrowserModel();
+  }
+}
+byId('load-model-button').addEventListener('click', loadBrowserModel);
+byId('unload-model-button').addEventListener('click', () => browserModel?.stop());
 syncAvailability();
 refreshModelStatus();
+refreshBrowserSupport();
 
 function announce(message) {
   byId('status-message').textContent = message;
@@ -92,7 +197,7 @@ function showState(state) {
 
 function updateReadyCopy() {
   byId('ready-title').textContent = selectedImage ? 'Photo ready. Let’s settle this.' : 'Add a photo to get started.';
-  byId('ready-description').textContent = selectedImage ? 'Hit the button. We’ll take a closer look.' : 'One photo. One very important answer.';
+  byId('ready-description').textContent = selectedImage ? 'Hit the button. We’ll take a closer look.' : 'One photo. One answer.';
 }
 
 function setClassifyLabel(label, arrow = true) {
@@ -103,14 +208,6 @@ function setClassifyLabel(label, arrow = true) {
     icon.textContent = '↗';
     classifyButton.append(icon);
   }
-}
-
-function cancelVerdict() {
-  if (activeRequest) activeRequest.abort();
-  activeRequest = null;
-  busy = false;
-  dropZone.classList.remove('scanning');
-  setClassifyLabel('Is it a hotdog?');
 }
 
 function showError(message) {
@@ -148,7 +245,7 @@ async function selectPhoto(file) {
     return;
   }
 
-  cancelVerdict();
+  setClassifyLabel('Is it a hotdog?');
   const previousUrl = photoUrl;
   photoUrl = nextUrl;
   selectedImage = candidate;
@@ -214,7 +311,7 @@ function prepareImage(image) {
 classifyButton.addEventListener('click', async () => {
   if (!selectedImage || busy || modelState !== 'ready') return;
   if (location.protocol === 'file:') {
-    showError('Start the Python server and open http://localhost:8000 to use the local model.');
+    showError('Open this app over HTTPS or localhost. Direct file access cannot run the model.');
     return;
   }
   busy = true;
@@ -229,15 +326,21 @@ classifyButton.addEventListener('click', async () => {
   showState('loading');
   announce('Your local model is analyzing the photo.');
   try {
-    const response = await fetch('/api/classify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: prepareImage(selectedImage) }),
-      signal: controller.signal,
-    });
-    const result = await response.json();
+    const image = prepareImage(selectedImage);
+    let result;
+    if (backend === 'browser') {
+      result = await browserModel.classify(image, controller.signal);
+    } else {
+      const response = await fetch('/api/classify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image }),
+        signal: controller.signal,
+      });
+      result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Classification failed. Please retry.');
+    }
     if (activeRequest !== controller) return;
-    if (!response.ok) throw new Error(result.error || 'Classification failed. Please retry.');
     if (!['hotdog', 'not_hotdog'].includes(result.label)) throw new Error('The model returned an invalid verdict.');
     const isHotdog = result.label === 'hotdog';
     byId('result-state').classList.toggle('not-hotdog', !isHotdog);
@@ -252,7 +355,7 @@ classifyButton.addEventListener('click', async () => {
     showState('ready');
     byId('ready-title').textContent = 'The verdict will have to wait.';
     byId('ready-description').textContent = 'Something interrupted the analysis. Give it another try.';
-    showError(error.name === 'AbortError' ? 'The request timed out. Check LM Studio and try again.' : error.message === 'Failed to fetch' ? 'Cannot reach the app server. Make sure the Python server is running.' : error.message);
+    showError(error.name === 'AbortError' ? (backend === 'browser' ? 'Browser analysis timed out. Reload the model and retry.' : 'The request timed out. Check LM Studio and try again.') : error.message === 'Failed to fetch' ? 'Cannot reach the app server. Make sure the Python server is running.' : error.message);
   } finally {
     clearTimeout(timeout);
     if (activeRequest === controller) {
@@ -268,7 +371,7 @@ classifyButton.addEventListener('click', async () => {
 
 byId('reset-button').addEventListener('click', () => {
   ++selectionVersion;
-  cancelVerdict();
+  setClassifyLabel('Is it a hotdog?');
   preview.removeAttribute('src');
   if (photoUrl) URL.revokeObjectURL(photoUrl);
   photoUrl = null;

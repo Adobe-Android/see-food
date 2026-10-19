@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# JavaScript dependencies (production output dist/ is ignored below)
+node_modules/
+
 # Distribution / packaging
 .Python
 build/

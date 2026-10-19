@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#faf7ef">
   <title>See Food</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="app.js" defer></script>
+  <script src="app.js" type="module"></script>
 </head>
 <body>
   <header class="site-header">
@@ -21,6 +21,28 @@
       <p class="subtitle">Is it a hotdog? That's it. That's the app.</p>
     </section>
 
+    <section class="backend-panel" aria-label="AI backend">
+      <label for="backend-select">Run AI with</label>
+      <select id="backend-select">
+        <option value="lmstudio">LM Studio · local server</option>
+        <option value="browser">Browser WebGPU · experimental</option>
+      </select>
+      <div id="browser-controls" hidden>
+        <div class="browser-details">
+          <details>
+            <summary>Technical details</summary>
+            <p>Model: <a href="https://huggingface.co/onnx-community/d1-omni-600M-ONNX" target="_blank" rel="noopener noreferrer">d1-omni-600M</a></p>
+            <p>Size: ~600 MB first download</p>
+            <p>Requires HTTPS or localhost and WebGPU with FP16 support. Model compatibility and available memory are checked during loading and inference.</p>
+            <p>Model downloads contact Hugging Face; runtime downloads contact jsDelivr. Caching is best effort; offline availability is not guaranteed.</p>
+          </details>
+        </div>
+        <button id="load-model-button" class="button button-dark" type="button" hidden disabled>Reload browser model</button>
+        <button id="unload-model-button" class="button button-dark" type="button" hidden>Unload Model</button>
+        <p id="model-progress" role="status" aria-live="polite" hidden></p>
+      </div>
+      <p id="backend-description">Requires the Python app server and LM Studio on the host computer.</p>
+    </section>
     <p id="availability-message" class="availability-message" role="status">Checking Local AI before you add a photo…</p>
     <section class="workspace" aria-label="Photo classifier">
       <div class="upload-panel" id="drop-zone">
@@ -48,7 +70,7 @@
         <div id="ready-state" class="ready-state">
           <div class="verdict-icon" aria-hidden="true">?</div>
           <h2 id="ready-title">Add a photo to get started.</h2>
-          <p id="ready-description">One photo. One very important answer.</p>
+          <p id="ready-description">One photo. One answer.</p>
         </div>
         <div id="loading-state" class="loading-state" hidden><div class="spinner" aria-hidden="true"></div><h2>Consulting the bun…</h2><p>Examining your photo. Good things take a moment.</p></div>
         <div id="result-state" class="result-state" hidden><div id="result-icon" class="result-icon" aria-hidden="true"><span>🌭</span></div><p class="result-eyebrow">THE VERDICT</p><h2 id="result-title" tabindex="-1"></h2><p id="result-description"></p></div>
@@ -62,7 +84,7 @@
     <p id="error-message" class="error-message" role="alert" hidden></p>
     <p id="status-message" class="sr-only" role="status" aria-live="polite"></p>
 
-    <p class="privacy-note">Analyzed on the computer running the app.<br>No cloud uploads.</p>
+    <p class="privacy-note" id="privacy-note">Analyzed on the computer running the app.<br>No cloud uploads.</p>
   </main>
   <footer><span>Made with ❤️ and 🤖</span><span>Independently made. Not affiliated with the show.</span></footer>
 </body>

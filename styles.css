@@ -4,7 +4,17 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: 'DM Sans', sans-serif; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
+.backend-panel { margin: 0 0 18px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fffdf7; }
+.backend-panel label { font-weight: 700; margin-right: 12px; }
+.backend-panel select { max-width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); }
+.backend-panel select:focus-visible { outline: 3px solid #276bba; outline-offset: 3px; }
+.backend-panel p { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 10px 0 0; overflow-wrap: anywhere; }
+.browser-details { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; margin-top: 10px; font-size: 13px; line-height: 1.6; }
+.backend-panel summary { cursor: pointer; }
+.backend-panel summary:focus-visible { outline: 3px solid #276bba; outline-offset: 3px; }
+#browser-controls .button { margin: 12px 12px 0 0; }
+#model-progress { min-height: 1.6em; }
 button, a, label { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 button:focus-visible, a:focus-visible, input:focus-visible + span { outline: 3px solid #276bba; outline-offset: 5px; }

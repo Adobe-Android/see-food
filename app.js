@@ -7,7 +7,6 @@ const preview = byId('preview');
 const dropZone = byId('drop-zone');
 const classifyButton = byId('classify-button');
 const maxFileSize = 15 * 1024 * 1024;
-let photoUrl = null;
 let selectedImage = null;
 let selectionVersion = 0;
 let activeRequest = null;
@@ -230,28 +229,26 @@ async function selectPhoto(file) {
 
   const nextUrl = URL.createObjectURL(file);
   const candidate = new Image();
-  candidate.src = nextUrl;
+  let prepared;
   try {
+    candidate.src = nextUrl;
     await candidate.decode();
+    if (version !== selectionVersion || modelState !== 'ready' || busy) return;
+    prepared = prepareImage(candidate);
   } catch {
-    URL.revokeObjectURL(nextUrl);
     if (version === selectionVersion) {
-      showError('This image could not be opened. Try a JPG, PNG, or WEBP instead.');
+      showError('This image could not be prepared. Try a JPG, PNG, or WEBP instead.');
     }
     return;
-  }
-  if (version !== selectionVersion || modelState !== 'ready' || busy) {
+  } finally {
+    candidate.removeAttribute('src');
     URL.revokeObjectURL(nextUrl);
-    return;
   }
 
   setClassifyLabel('Is it a hotdog?');
-  const previousUrl = photoUrl;
-  photoUrl = nextUrl;
-  selectedImage = candidate;
+  selectedImage = prepared;
   updateReadyCopy();
-  preview.src = photoUrl;
-  if (previousUrl) URL.revokeObjectURL(previousUrl);
+  preview.src = selectedImage;
   byId('file-name').textContent = file.name;
   byId('empty-state').hidden = true;
   byId('preview-state').hidden = false;
@@ -300,12 +297,17 @@ function prepareImage(image) {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('This browser could not prepare the photo.');
-  context.fillStyle = '#fff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.85);
+  try {
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('This browser could not prepare the photo.');
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 }
 
 classifyButton.addEventListener('click', async () => {
@@ -326,7 +328,7 @@ classifyButton.addEventListener('click', async () => {
   showState('loading');
   announce('Your local model is analyzing the photo.');
   try {
-    const image = prepareImage(selectedImage);
+    const image = selectedImage;
     let result;
     if (backend === 'browser') {
       result = await browserModel.classify(image, controller.signal);
@@ -373,8 +375,6 @@ byId('reset-button').addEventListener('click', () => {
   ++selectionVersion;
   setClassifyLabel('Is it a hotdog?');
   preview.removeAttribute('src');
-  if (photoUrl) URL.revokeObjectURL(photoUrl);
-  photoUrl = null;
   selectedImage = null;
   updateReadyCopy();
   byId('file-name').textContent = '';

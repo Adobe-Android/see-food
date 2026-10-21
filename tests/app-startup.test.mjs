@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-async function startApp({ staticHost = false, staticBuild, checkSupport, BrowserModel } = {}) {
+async function startApp({ staticHost = false, staticBuild, checkSupport, BrowserModel, imageEnvironment = {} } = {}) {
   let source = await readFile(new URL('../app.js', import.meta.url), 'utf8');
   if (checkSupport) source = source.replace("import('./browser-core.js')", 'Promise.resolve({ checkWebGPUSupport: checkSupport })');
   if (BrowserModel) source = source.replace("import('./browser-client.js')", 'Promise.resolve(browserClientModule)');
@@ -13,7 +13,9 @@ async function startApp({ staticHost = false, staticBuild, checkSupport, Browser
     if (!nodes.has(id)) nodes.set(id, {
       textContent: '', hidden: false, disabled: false, dataset: {}, listeners: {},
       value: id === 'backend-select' ? 'lmstudio' : '',
-      classList: { toggle() {}, remove() {} },
+      classList: { toggle() {}, remove() {}, add() {} },
+      removeAttribute(name) { delete this[name]; },
+      focus() {},
       querySelector(selector) {
         const value = selector.match(/^option\[value="(.+)"\]$/)?.[1];
         return backendOptions.has(value) ? { remove() { backendOptions.delete(value); } } : null;
@@ -34,6 +36,7 @@ async function startApp({ staticHost = false, staticBuild, checkSupport, Browser
     fetch: () => { requests++; return new Promise((resolve) => { resolveStatus = resolve; }); },
     checkSupport, browserClientModule: { BrowserModel },
     AbortController, setTimeout: () => 1, clearTimeout() {},
+    ...imageEnvironment,
   });
   if (staticBuild !== undefined) context.__STATIC_HOST__ = staticBuild;
   script.runInContext(context);
@@ -232,4 +235,74 @@ test('unsupported WebGPU never starts browser loading', async () => {
   assert.equal(vm.runInContext('browserModel', context), null);
   assert.equal(node('model-progress').textContent, 'WebGPU is unavailable.');
   assert.equal(node('load-model-button').hidden, true);
+});
+
+test('photo selection retains only the resized JPEG and reuses it for classification', async () => {
+  const images = [];
+  const canvases = [];
+  const revoked = [];
+  const draws = [];
+  class Photo {
+    constructor() { this.naturalWidth = 4032; this.naturalHeight = 3024; images.push(this); }
+    async decode() {}
+    removeAttribute(name) { delete this[name]; }
+  }
+  const { context, node } = await startApp({ imageEnvironment: {
+    Image: Photo,
+    URL: { createObjectURL: () => 'blob:original', revokeObjectURL: (url) => revoked.push(url) },
+  } });
+  context.document.createElement = (tag) => {
+    if (tag !== 'canvas') return { setAttribute() {} };
+    const canvas = { width: 0, height: 0,
+      getContext: () => ({ fillRect() {}, drawImage: (...args) => draws.push(args) }),
+      toDataURL: (type, quality) => { assert.equal(type, 'image/jpeg'); assert.equal(quality, 0.85); return 'data:image/jpeg;base64,resized'; },
+    };
+    canvases.push(canvas);
+    return canvas;
+  };
+  vm.runInContext("renderModelStatus('ready', 'Ready');", context);
+  await vm.runInContext("selectPhoto({type:'image/jpeg', size:1000, name:'camera.jpg'})", context);
+  assert.equal(vm.runInContext('selectedImage', context), 'data:image/jpeg;base64,resized');
+  assert.equal(node('preview').src, 'data:image/jpeg;base64,resized');
+  assert.equal(images[0].src, undefined);
+  assert.deepEqual(revoked, ['blob:original']);
+  assert.deepEqual(draws[0].slice(1), [0, 0, 1280, 960]);
+  assert.equal(canvases[0].width * canvases[0].height, 0);
+  let classified;
+  context.classifier = { state: 'ready', classify: async (image) => { classified = image; return { label: 'hotdog' }; } };
+  vm.runInContext("backend = 'browser'; browserModel = classifier;", context);
+  await node('classify-button').listeners.click();
+  assert.equal(classified, 'data:image/jpeg;base64,resized');
+  assert.equal(canvases.length, 1, 'classification does not reencode the photo');
+  node('reset-button').listeners.click();
+  assert.equal(vm.runInContext('selectedImage', context), null);
+  assert.equal(node('preview').src, undefined);
+});
+
+test('photo preparation releases source URLs and canvas on failure and ignores stale decodes', async () => {
+  let decode;
+  const revoked = [];
+  const images = [];
+  class Photo {
+    constructor() { this.naturalWidth = 8000; this.naturalHeight = 6000; images.push(this); }
+    decode() { return new Promise((resolve) => { decode = resolve; }); }
+    removeAttribute(name) { delete this[name]; }
+  }
+  const { context, node } = await startApp({ imageEnvironment: { Image: Photo,
+    URL: { createObjectURL: () => 'blob:source', revokeObjectURL: (url) => revoked.push(url) } } });
+  const canvas = { width: 0, height: 0, getContext: () => null };
+  context.document.createElement = (tag) => tag === 'canvas' ? canvas : { setAttribute() {} };
+  vm.runInContext("renderModelStatus('ready', 'Ready');", context);
+  const failed = vm.runInContext("selectPhoto({type:'image/jpeg',size:100,name:'photo'})", context);
+  decode();
+  await failed;
+  assert.equal(canvas.width * canvas.height, 0);
+  assert.match(node('error-message').textContent, /could not be prepared/);
+  const stale = vm.runInContext("selectPhoto({type:'image/jpeg',size:100,name:'stale'})", context);
+  vm.runInContext('++selectionVersion', context);
+  decode();
+  await stale;
+  assert.equal(vm.runInContext('selectedImage', context), null);
+  assert.deepEqual(revoked, ['blob:source', 'blob:source']);
+  assert.ok(images.every((image) => image.src === undefined));
 });

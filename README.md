@@ -14,6 +14,25 @@ Choose **Browser WebGPU (experimental)** in the backend selector to load the mod
 - Browser caching is best effort: storage limits, eviction, private browsing, or cache clearing can require downloading again. Offline availability is **not guaranteed**.
 - WebGPU support and performance vary by browser, driver, and device. The production build was exercised under a `/see-food/` project subpath in the integrated Chromium browser: the model loaded, the hotdog sample returned **Hotdog**, and the dachshund sample returned **Not hotdog**. This is a smoke test, not an accuracy benchmark or a guarantee across devices. A live GitHub Pages deployment still needs verification.
 
+### Mobile memory usage
+
+Photos are resized once, when selected, to a maximum edge of 1280 pixels and encoded as JPEG at quality 0.85 (the same settings previously used at inference). Only that JPEG is retained for preview and analysis; the original image URL is revoked and its source detached after preparation. Temporary canvas backing storage is cleared on success and failure. The original must still be decoded briefly, and browser reclamation timing is implementation-dependent.
+
+The worker disposes vision inputs before text inference and disposes separate vision/text embeddings before decision inference. Processor temporaries are scoped to the vision stage rather than retained through the decision stage. Decision tensors are disposed before reporting a result. Model sessions remain loaded between photos; there is no new reload delay or change to model precision, question, or inference resolution.
+
+For uncompressed downloads with a usable `Content-Length`, the worker fills one preallocated buffer instead of retaining all network chunks and then allocating a second complete buffer. Unknown/compressed/mismatched lengths retain a safe fallback, whose chunk references are cleared before caching. Cache hits and caching behavior are preserved; browser-managed cache copies and runtime/GPU allocations still exist.
+
+Memory impact (allocation accounting, **not measured Safari process-memory savings**):
+
+| Change | Impact and limits |
+| --- | --- |
+| Retained photo | A single 4032 × 3024 RGBA surface is 46.51 MiB versus 4.69 MiB at 1280 × 960: **41.82 MiB / 89.9% smaller**. For 8064 × 6048, the difference is **181.36 MiB / 97.5%**. Actual decoders may use different formats or retain caches. |
+| Temporary canvas | Explicitly clears up to **6.25 MiB** of nominal RGBA storage for a 1280 × 1280 canvas after selection; classification no longer creates another canvas or JPEG. Reclamation timing is browser-dependent. |
+| Intermediate tensors | Tests verify stage-boundary disposal and cleanup after failures in each inference stage. A synthetic fixture releases **40,096 bytes** of vision inputs before text inference and **16,400 bytes** of embeddings/token IDs before decision inference; production sizes depend on preprocessing and token counts. This is not a GPU-memory measurement. |
+| Download assembly | Removes one full-file-sized retained chunk set on the known-length path. For a 362.9 MB weight file, that is approximately **346 MiB** of avoidable payload overlap at assembly, excluding network chunks, caching, runtime copies, and GC timing. The fallback still needs an assembly copy. |
+
+Validation: Node regression tests cover resize/reuse, stale selections, cleanup failures, download length variants, caching, and tensor lifetimes. Local Chromium WebGPU smoke tests classified both bundled samples correctly without unloading the model. iPhone Safari process/GPU memory has not been measured; these changes do not guarantee elimination of WebGPU crashes. The model's baseline memory remains substantial.
+
 ### Static build and development
 
 Use Node.js **22.12+ (22.x)** or **24+** and npm. Build tooling is pinned to Vite **8.3.4** in the lockfile. The worker imports the standalone Transformers.js **4.3.1** browser module and matching ONNX Runtime Web version above from jsDelivr. Transformers.js supplies `AutoTokenizer`, `AutoImageProcessor`, and `RawImage`; inference uses ONNX Runtime WebGPU in a module worker.

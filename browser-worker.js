@@ -22,20 +22,34 @@ async function fetchFile(file) {
   } catch { /* Storage can be unavailable or evicted; network loading still works. */ }
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Model download failed (HTTP ${response.status}). Please retry.`);
-  const total = Number(response.headers.get('content-length'));
+  const length = Number(response.headers.get('content-length'));
+  const total = Number.isSafeInteger(length) && length > 0 ? length : 0;
   const reader = response.body.getReader();
   const chunks = [];
+  // Content-Length can describe compressed bytes, so retain a streaming fallback.
+  let bytes = total && !response.headers.get('content-encoding') ? new Uint8Array(total) : null;
   let loaded = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.length;
-    send('progress', { message: `${file}: ${(loaded / 1e6).toFixed(1)} MB${total ? ` / ${(total / 1e6).toFixed(1)} MB` : ''}` });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (bytes && loaded + value.length > bytes.length) {
+        chunks.push(bytes.subarray(0, loaded));
+        bytes = null;
+      }
+      if (bytes) bytes.set(value, loaded);
+      else chunks.push(value);
+      loaded += value.length;
+      send('progress', { message: `${file}: ${(loaded / 1e6).toFixed(1)} MB${total ? ` / ${(total / 1e6).toFixed(1)} MB` : ''}` });
+    }
+  } finally { reader.releaseLock(); }
+  if (bytes) bytes = bytes.subarray(0, loaded);
+  else {
+    bytes = new Uint8Array(loaded);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    chunks.length = 0;
   }
-  const bytes = new Uint8Array(loaded);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   if (cache) {
     try { await cache.put(url, new Response(bytes)); } catch { /* Cache quota does not prevent inference. */ }
   }
@@ -86,6 +100,35 @@ async function load() {
 
 const int64 = (values, dims) => new ort.Tensor('int64', BigInt64Array.from(values, BigInt), dims);
 
+function disposeTensors(tensors) {
+  for (const tensor of new Set(tensors)) tensor.dispose();
+}
+
+async function visionEmbeddings(image) {
+  const inputs = await processor(await RawImage.read(image));
+  const feeds = {};
+  try {
+    for (const key of ['pixel_values', 'pixel_attention_mask', 'spatial_shapes']) {
+      const input = inputs[key];
+      feeds[key] = new ort.Tensor(input.type, input.data, input.dims);
+    }
+    return await sessions[1].run(feeds);
+  } finally { disposeTensors(Object.values(feeds)); }
+}
+
+async function imageQuestionEmbeddings(image) {
+  const vision = await visionEmbeddings(image);
+  let ids;
+  let text;
+  try {
+    ids = int64(question.ids, [1, question.ids.length]);
+    text = await sessions[0].run({ input_ids: ids });
+    return joinEmbeddings(Object.values(vision)[0], Object.values(text)[0]);
+  } finally {
+    disposeTensors([...Object.values(vision), ...Object.values(text || {}), ...(ids ? [ids] : [])]);
+  }
+}
+
 async function classify(image, id) {
   if (loading || running || sessions.length !== 3) {
     send('error', { id, phase: 'classify', message: 'The browser model is not ready.' });
@@ -94,20 +137,8 @@ async function classify(image, id) {
   running = true;
   const tensors = [];
   try {
-    const inputs = await processor(await RawImage.read(image));
-    const visionFeeds = {};
-    for (const key of ['pixel_values', 'pixel_attention_mask', 'spatial_shapes']) {
-      const input = inputs[key];
-      visionFeeds[key] = new ort.Tensor(input.type, input.data, input.dims);
-      tensors.push(visionFeeds[key]);
-    }
-    const vision = await sessions[1].run(visionFeeds);
-    tensors.push(...Object.values(vision));
-    const ids = int64(question.ids, [1, question.ids.length]);
-    tensors.push(ids);
-    const text = await sessions[0].run({ input_ids: ids });
-    tensors.push(...Object.values(text));
-    const joined = joinEmbeddings(Object.values(vision)[0], Object.values(text)[0]);
+    const joined = await imageQuestionEmbeddings(image);
+    image = null;
     const feeds = {
       inputs_embeds: new ort.Tensor('float32', joined.data, [1, joined.length, 1024]),
       attention_mask: int64(Array(joined.length).fill(1), [1, joined.length]),
@@ -119,7 +150,10 @@ async function classify(image, id) {
     tensors.push(...Object.values(feeds));
     const output = await sessions[2].run(feeds);
     tensors.push(...Object.values(output));
-    send('result', { id, result: decodeDecision(output.logits.data) });
+    const result = decodeDecision(output.logits.data);
+    disposeTensors(tensors);
+    tensors.length = 0;
+    send('result', { id, result });
   } catch (error) {
     await release();
     send('error', { id, phase: 'classify', message: `Browser inference failed. Reload the model and retry. ${error.message || ''}` });

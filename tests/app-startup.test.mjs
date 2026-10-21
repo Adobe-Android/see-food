@@ -266,7 +266,7 @@ test('photo selection retains only the resized JPEG and reuses it for classifica
   assert.equal(node('preview').src, 'data:image/jpeg;base64,resized');
   assert.equal(images[0].src, undefined);
   assert.deepEqual(revoked, ['blob:original']);
-  assert.deepEqual(draws[0].slice(1), [0, 0, 1280, 960]);
+  assert.deepEqual(draws[0].slice(1), [0, 0, 512, 384]);
   assert.equal(canvases[0].width * canvases[0].height, 0);
   let classified;
   context.classifier = { state: 'ready', classify: async (image) => { classified = image; return { label: 'hotdog' }; } };
@@ -306,3 +306,26 @@ test('photo preparation releases source URLs and canvas on failure and ignores s
   assert.deepEqual(revoked, ['blob:source', 'blob:source']);
   assert.ok(images.every((image) => image.src === undefined));
 });
+
+for (const [width, height, expected] of [
+  [4032, 3024, [512, 384]],
+  [3024, 4032, [384, 512]],
+  [1024, 1024, [512, 512]],
+  [320, 240, [320, 240]],
+  [10000, 1, [512, 1]],
+]) {
+  test(`image preparation caps ${width}x${height} at a 512-pixel edge without upscaling`, async () => {
+    const { context } = await startApp();
+    let dimensions;
+    const canvas = {
+      getContext: () => ({ fillRect() {}, drawImage() {} }),
+      toDataURL() { dimensions = [this.width, this.height]; return 'data:image/jpeg;base64,resized'; },
+    };
+    context.document.createElement = () => canvas;
+    context.image = { naturalWidth: width, naturalHeight: height };
+    vm.runInContext('prepareImage(image)', context);
+    assert.deepEqual(dimensions, expected);
+    assert.equal(canvas.width, 0);
+    assert.equal(canvas.height, 0);
+  });
+}

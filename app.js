@@ -293,7 +293,7 @@ dropZone.addEventListener('drop', (event) => {
 });
 
 function prepareImage(image) {
-  const scale = Math.min(1, 1280 / Math.max(image.naturalWidth, image.naturalHeight));
+  const scale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));

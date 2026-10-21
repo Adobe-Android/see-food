@@ -16,9 +16,9 @@ Choose **Browser WebGPU (experimental)** in the backend selector to load the mod
 
 ### Mobile memory usage
 
-Photos are resized once, when selected, to a maximum edge of 1280 pixels and encoded as JPEG at quality 0.85 (the same settings previously used at inference). Only that JPEG is retained for preview and analysis; the original image URL is revoked and its source detached after preparation. Temporary canvas backing storage is cleared on success and failure. The original must still be decoded briefly, and browser reclamation timing is implementation-dependent.
+Photos are resized once, when selected, to a maximum edge of 512 pixels, preserving aspect ratio without enlarging smaller images, and encoded as JPEG at quality 0.85. Only that JPEG is retained for preview and analysis; the original image URL is revoked and its source detached after preparation. Temporary canvas backing storage is cleared on success and failure. The original must still be decoded briefly, and browser reclamation timing is implementation-dependent.
 
-The worker disposes vision inputs before text inference and disposes separate vision/text embeddings before decision inference. Processor temporaries are scoped to the vision stage rather than retained through the decision stage. Decision tensors are disposed before reporting a result. Model sessions remain loaded between photos; there is no new reload delay or change to model precision, question, or inference resolution.
+The worker disposes vision inputs before text inference and disposes separate vision/text embeddings before decision inference. Processor temporaries are scoped to the vision stage rather than retained through the decision stage. Decision tensors are disposed before reporting a result. Model sessions remain loaded between photos; there is no new reload delay or change to model precision or question. The app-level image edge limit is 512 pixels; the model processor still applies its own preprocessing.
 
 For uncompressed downloads with a usable `Content-Length`, the worker fills one preallocated buffer instead of retaining all network chunks and then allocating a second complete buffer. Unknown/compressed/mismatched lengths retain a safe fallback, whose chunk references are cleared before caching. Cache hits and caching behavior are preserved; browser-managed cache copies and runtime/GPU allocations still exist.
 
@@ -26,8 +26,8 @@ Memory impact (allocation accounting, **not measured Safari process-memory savin
 
 | Change | Impact and limits |
 | --- | --- |
-| Retained photo | A single 4032 × 3024 RGBA surface is 46.51 MiB versus 4.69 MiB at 1280 × 960: **41.82 MiB / 89.9% smaller**. For 8064 × 6048, the difference is **181.36 MiB / 97.5%**. Actual decoders may use different formats or retain caches. |
-| Temporary canvas | Explicitly clears up to **6.25 MiB** of nominal RGBA storage for a 1280 × 1280 canvas after selection; classification no longer creates another canvas or JPEG. Reclamation timing is browser-dependent. |
+| Retained photo | A single 4032 × 3024 RGBA surface is 46.51 MiB versus 0.75 MiB at 512 × 384: **45.76 MiB / 98.4% smaller**. For 8064 × 6048, the difference is **185.30 MiB / 99.6%**. The resized surface is **84% smaller** than at the previous 1280-pixel edge limit. Actual decoders may use different formats or retain caches. |
+| Temporary canvas | Explicitly clears up to **1 MiB** of nominal RGBA storage for a 512 × 512 canvas after selection; classification no longer creates another canvas or JPEG. Reclamation timing is browser-dependent. |
 | Intermediate tensors | Tests verify stage-boundary disposal and cleanup after failures in each inference stage. A synthetic fixture releases **40,096 bytes** of vision inputs before text inference and **16,400 bytes** of embeddings/token IDs before decision inference; production sizes depend on preprocessing and token counts. This is not a GPU-memory measurement. |
 | Download assembly | Removes one full-file-sized retained chunk set on the known-length path. For a 362.9 MB weight file, that is approximately **346 MiB** of avoidable payload overlap at assembly, excluding network chunks, caching, runtime copies, and GC timing. The fallback still needs an assembly copy. |
 
@@ -107,7 +107,7 @@ python .\src\server.py --host 0.0.0.0
 
 ## Images and privacy
 
-Images up to 15 MB are decoded in the browser, resized to a maximum 1280-pixel edge, flattened onto white, and re-encoded as JPEG. This supports browser-decodable formats and strips original metadata from the transmitted image. Unsupported HEIC files should be converted to JPEG first. Animated images are classified from one rendered frame.
+Images up to 15 MB are decoded in the browser, resized to a maximum 512-pixel edge, flattened onto white, and re-encoded as JPEG. This supports browser-decodable formats and strips original metadata from the transmitted image. Unsupported HEIC files should be converted to JPEG first. Animated images are classified from one rendered frame.
 
 In **LM Studio** mode, the prepared photo travels to the Python server on your computer, then to LM Studio on that same computer. In **Browser WebGPU** mode, the photo stays in the browser. The app does not persist images, filenames, or model responses; the Python server restricts static serving to its frontend allowlist. Check LM Studio's own logging/storage settings separately. Google Fonts makes optional typography requests, but receives no photos; system fonts work offline.
 
